@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  fastapi:
+    build: .
+    container_name: governance-api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - chroma_data:/app/chroma_db
+    env_file:
+      - .env
+    environment:
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+      - OUTPUT_DIR=/app/output
+      - DB_PATH=/app/output/governance_data.db
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_ENABLED=true
+    restart: unless-stopped
+    depends_on:
+      - redis
+
+  streamlit:
+    build: .
+    container_name: governance-ui
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - chroma_data:/app/chroma_db
+    env_file:
+      - .env
+    environment:
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+      - OUTPUT_DIR=/app/output
+      - API_URL=http://fastapi:8000
+      - REDIS_URL=redis://redis:6379/0
+
+  redis:
+    image: redis:7-alpine
+    container_name: governance-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: governance-worker
+    command: celery -A celery_app.celery_app worker --loglevel=INFO
+    volumes:
+      - .:/app
+      - chroma_data:/app/chroma_db
+    env_file:
+      - .env
+    environment:
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+      - OUTPUT_DIR=/app/output
+      - DB_PATH=/app/output/governance_data.db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CELERY_MAX_TASKS_PER_CHILD=30
+      - QUEUE_ENABLED=true
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
